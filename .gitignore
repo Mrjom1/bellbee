@@ -1,0 +1,21 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Local Godot binary (see Play.bat)
+Tools/Godot_*/
+
+# Godot generated
+Game/.godot/
+
+# Build output
+Builds/
+*.exe
+*.pck
+
+# Test captures
+Tests/Captures/
+
+# Temporary
+*.tmp
+*.log
