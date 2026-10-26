@@ -20,9 +20,11 @@ const COLORS := [
 	Color(1.0, 0.32, 0.36),
 ]
 const HITS_PER_COLOR := 5
-const GRAVITY := 150.0
-const MAX_FALL := 80.0
-const KNOCK_SPEED := 150.0
+# Knock and spawn speeds are scaled with gravity so a hit still lifts the bell ~75 px.
+const GRAVITY := 420.0
+const MAX_FALL := 210.0
+const KNOCK_SPEED := 250.0
+const SPAWN_SPEED := 290.0
 const HIT_COOLDOWN := 0.06
 
 var kind := Kind.YELLOW
@@ -37,7 +39,7 @@ func setup(p_stage: Stage, pos: Vector2) -> void:
 	position = pos
 	radius = 13.0
 	shadow_height = 1.3
-	vel = Vector2(randf_range(-30.0, 30.0), -175.0)
+	vel = Vector2(randf_range(-30.0, 30.0), -SPAWN_SPEED)
 	add_to_group("bells")
 
 
