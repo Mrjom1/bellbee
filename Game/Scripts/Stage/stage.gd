@@ -119,13 +119,16 @@ func show_banner(text: String, sub := "", seconds := 2.0) -> void:
 	banner_duration = seconds
 
 
-func _process(_delta: float) -> void:
+# Input events rather than polling, so a key tapped and released within one frame still counts.
+func _unhandled_input(event: InputEvent) -> void:
 	if state == State.GAME_OVER:
+		if state_time >= 1.0 and event.is_action_pressed("start"):
+			_continue()
 		return
-	if Input.is_action_just_pressed("pause"):
+	if event.is_action_pressed("pause"):
 		get_tree().paused = not get_tree().paused
 		Audio.play("menu")
-	elif get_tree().paused and Input.is_action_just_pressed("quit"):
+	elif get_tree().paused and event.is_action_pressed("quit"):
 		Game.end_run()
 
 
@@ -594,17 +597,17 @@ func _update_clear() -> void:
 
 
 func _update_game_over() -> void:
-	if state_time < 1.0:
-		return
-	if Input.is_action_just_pressed("start"):
-		Game.continue_game()
-		player.respawn()
-		Audio.play("start")
-		Audio.play_music("boss" if boss != null and is_instance_valid(boss) else "stage")
-		_set_state(State.BOSS if boss != null and is_instance_valid(boss) else State.PLAYING)
-		return
 	if state_time >= CONTINUE_TIME + 1.0:
 		Game.end_run()
+
+
+func _continue() -> void:
+	Game.continue_game()
+	player.respawn()
+	Audio.play("start")
+	var boss_alive := boss != null and is_instance_valid(boss)
+	Audio.play_music("boss" if boss_alive else "stage")
+	_set_state(State.BOSS if boss_alive else State.PLAYING)
 
 
 func continue_seconds_left() -> int:

@@ -1,7 +1,8 @@
 extends Node
 
 ## All sound is synthesised at startup so the game ships no audio files.
-## Effects are short note lists; music is an original chiptune rendered on a worker thread.
+## Effects are short note lists; music is an original chiptune rendered a slice per frame,
+## so it works on the single-threaded web build without freezing the title screen.
 
 enum Wave {
 	SQUARE,
@@ -16,6 +17,8 @@ const PLAYER_COUNT := 12
 const EFFECTS_VOLUME_DB := -9.0
 const MUSIC_VOLUME_DB := -11.0
 const ATTACK_SECONDS := 0.004
+# Music rendering yields back to the engine after this much work in one frame.
+const RENDER_BUDGET_USEC := 5000
 
 # Each note: [wave, start Hz, end Hz, seconds, volume 0..1]. Notes play one after another.
 const SOUNDS := {
@@ -196,7 +199,7 @@ var players: Array[AudioStreamPlayer] = []
 var next_player := 0
 var music_player: AudioStreamPlayer
 var wanted_song := ""
-var music_thread: Thread
+var slice_start := 0
 
 
 func _ready() -> void:
@@ -216,14 +219,8 @@ func _ready() -> void:
 	for sound_name in SOUNDS:
 		streams[sound_name] = _to_stream(_render_effect(SOUNDS[sound_name], rng), false)
 
-	# Rendering ~1 minute of music in GDScript takes a few seconds; keep it off the main thread.
-	music_thread = Thread.new()
-	music_thread.start(_render_all_songs)
-
-
-func _exit_tree() -> void:
-	if music_thread != null and music_thread.is_started():
-		music_thread.wait_to_finish()
+	# ~1 minute of music takes seconds of GDScript work; spread it over frames (title song first).
+	_render_all_songs()
 
 
 func play(sound_name: String, volume_db := 0.0) -> void:
@@ -256,15 +253,20 @@ func stop_music() -> void:
 
 func _render_all_songs() -> void:
 	var rng := RandomNumberGenerator.new()
+	slice_start = Time.get_ticks_usec()
 	for song_name in ["title", "stage", "boss"]:
-		var stream := _to_stream(_render_song(SONGS[song_name], rng), true)
-		_on_song_ready.call_deferred(song_name, stream)
+		var samples: PackedFloat32Array = await _render_song(SONGS[song_name], rng)
+		var data: PackedByteArray = await _encode(samples)
+		songs[song_name] = _make_stream(data, samples.size(), true)
+		if wanted_song == song_name:
+			play_music(song_name)
 
 
-func _on_song_ready(song_name: String, stream: AudioStreamWAV) -> void:
-	songs[song_name] = stream
-	if wanted_song == song_name:
-		play_music(song_name)
+# Yields to the next frame once this frame's rendering budget is used up.
+func _breathe() -> void:
+	if Time.get_ticks_usec() - slice_start > RENDER_BUDGET_USEC:
+		await get_tree().process_frame
+		slice_start = Time.get_ticks_usec()
 
 
 func _render_effect(notes: Array, rng: RandomNumberGenerator) -> PackedFloat32Array:
@@ -299,6 +301,7 @@ func _render_song(song: Dictionary, rng: RandomNumberGenerator) -> PackedFloat32
 			var bass_note := root + (12 if i % 2 == 1 else 0)
 			_add_tone(buffer, bar_start + i * step, int(step * 0.9), Wave.TRIANGLE,
 				_hz(bass_note), _hz(bass_note), 0.42, 0.25, rng)
+			await _breathe()
 
 		# Arpeggio: chord tones climbing and falling an octave up.
 		var arp_order := [1, 2, 3, 2, 1, 2, 3, 2]
@@ -306,9 +309,11 @@ func _render_song(song: Dictionary, rng: RandomNumberGenerator) -> PackedFloat32
 			var arp_note: int = root + 12 + chord[arp_order[i]] + (12 if i == 2 or i == 6 else 0)
 			_add_tone(buffer, bar_start + i * step, int(step * 0.5), Wave.PULSE,
 				_hz(arp_note), _hz(arp_note), 0.07, 0.15, rng)
+			await _breathe()
 
-		_render_melody_bar(buffer, bar_start, step, song["melody"][bar], rng)
+		await _render_melody_bar(buffer, bar_start, step, song["melody"][bar], rng)
 		_render_drum_bar(buffer, bar_start, step, song["drums"], rng)
+		await _breathe()
 
 	return buffer
 
@@ -331,6 +336,7 @@ func _render_melody_bar(buffer: PackedFloat32Array, bar_start: int, step: int, l
 		_add_tone(buffer, bar_start + (i + 1) * step, int(step * length * 0.8), Wave.PULSE,
 			_hz(note), _hz(note), 0.05, 0.3, rng)
 		i += length
+		await _breathe()
 
 
 func _render_drum_bar(buffer: PackedFloat32Array, bar_start: int, step: int, pattern: String, rng: RandomNumberGenerator) -> void:
@@ -404,7 +410,21 @@ func _to_stream(samples: PackedFloat32Array, looping: bool) -> AudioStreamWAV:
 	data.resize(samples.size() * 2)
 	for i in range(samples.size()):
 		data.encode_s16(i * 2, int(clampf(samples[i], -1.0, 1.0) * 32767.0))
+	return _make_stream(data, samples.size(), looping)
 
+
+# Same 16-bit conversion as _to_stream, sliced across frames for long music buffers.
+func _encode(samples: PackedFloat32Array) -> PackedByteArray:
+	var data := PackedByteArray()
+	data.resize(samples.size() * 2)
+	for i in range(samples.size()):
+		data.encode_s16(i * 2, int(clampf(samples[i], -1.0, 1.0) * 32767.0))
+		if i % 4096 == 0:
+			await _breathe()
+	return data
+
+
+func _make_stream(data: PackedByteArray, sample_count: int, looping: bool) -> AudioStreamWAV:
 	var stream := AudioStreamWAV.new()
 	stream.format = AudioStreamWAV.FORMAT_16_BITS
 	stream.mix_rate = MIX_RATE
@@ -413,7 +433,7 @@ func _to_stream(samples: PackedFloat32Array, looping: bool) -> AudioStreamWAV:
 	if looping:
 		stream.loop_mode = AudioStreamWAV.LOOP_FORWARD
 		stream.loop_begin = 0
-		stream.loop_end = samples.size()
+		stream.loop_end = sample_count
 	return stream
 
 

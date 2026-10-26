@@ -43,14 +43,17 @@ func _process(delta: float) -> void:
 	ground.scroll = scroll
 	overlay.queue_redraw()
 
+
+# Input events rather than polling, so a key tapped and released within one frame still counts.
+func _unhandled_input(event: InputEvent) -> void:
 	if starting:
 		return
-	if Input.is_action_just_pressed("start") or Input.is_action_just_pressed("shoot"):
+	if event.is_action_pressed("start") or event.is_action_pressed("shoot"):
 		starting = true
 		Audio.stop_music()
 		Audio.play("start")
 		get_tree().create_timer(0.6).timeout.connect(Game.start_new_game)
-	elif Input.is_action_just_pressed("pause"):
+	elif event.is_action_pressed("pause") and not OS.has_feature("web"):
 		get_tree().quit()
 
 

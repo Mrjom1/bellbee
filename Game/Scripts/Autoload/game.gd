@@ -85,6 +85,13 @@ func save_records() -> void:
 
 
 func _make_font(weight: int) -> Font:
+	# Browsers expose no system fonts; thicken Godot's built-in font so text keeps its weight.
+	if OS.has_feature("web"):
+		var web_font := FontVariation.new()
+		web_font.base_font = ThemeDB.fallback_font
+		web_font.variation_embolden = (weight - 400) / 500.0
+		return web_font
+
 	var system_font := SystemFont.new()
 	system_font.font_names = PackedStringArray(["Arial Rounded MT Bold", "Segoe UI", "Verdana", "Arial"])
 	system_font.font_weight = weight
@@ -108,10 +115,14 @@ func _bind(action: String, keys: Array, buttons: Array, axes: Array) -> void:
 		InputMap.erase_action(action)
 	InputMap.add_action(action, 0.35)
 
+	# Bind both the physical key and the key label: some browser and remote-input events carry only one.
 	for key in keys:
-		var key_event := InputEventKey.new()
-		key_event.physical_keycode = key
-		InputMap.action_add_event(action, key_event)
+		var physical_event := InputEventKey.new()
+		physical_event.physical_keycode = key
+		InputMap.action_add_event(action, physical_event)
+		var label_event := InputEventKey.new()
+		label_event.keycode = key
+		InputMap.action_add_event(action, label_event)
 
 	for button in buttons:
 		var button_event := InputEventJoypadButton.new()
